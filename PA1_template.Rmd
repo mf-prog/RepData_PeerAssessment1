@@ -7,19 +7,131 @@ output:
 
 
 ## Loading and preprocessing the data
+```{r setup}
+knitr::opts_chunk$set(echo = T, warning = F, message = F) # global options
+options(scipen = 999)
 
+# open the file
+step_data <- readr::read_csv("./activity.zip", show_col_types = FALSE)
 
+ # add preceding 0s
+step_data$interval <- sprintf("%04d", step_data$interval)
+
+# format time to HH:MM string
+step_data$interval <- paste0(substr(step_data$interval, 1, 2), ":", substr(step_data$interval, 3, 4))
+
+# convert to posixct
+step_data$interval <- as.POSIXct(strptime(step_data$interval, format = "%H:%M"))
+```
 
 ## What is mean total number of steps taken per day?
 
+```{r}
+# get total steps per day
+total_steps <- aggregate(steps~date, data = step_data, FUN = sum, na.rm = T)
 
+# summarise mean and median steps per day
+mean_steps <- floor(mean(total_steps$steps, na.rm = T))
+med_steps <- floor(median(total_steps$steps, na.rm = T))
+
+# hist plot
+hist(total_steps$steps, main = "Histogram of Total Steps per Day",
+     xlab = "Total Steps",
+     col = "lightblue")
+```
+
+**The mean number of steps per day is `r mean_steps`. **   
+**The median number of steps per day is `r med_steps`.**
 
 ## What is the average daily activity pattern?
 
+```{r}
+# calculate average steps per interval
+avg_steps <- aggregate(steps~interval, step_data, FUN = mean, na.rm = T)
 
+# plot avg steps over time
+plot(x = avg_steps$interval, y = avg_steps$steps, type = "l",
+     xlab = "Time of Day",
+     xaxt = "n",
+     ylab = "Total Steps")
+axis.POSIXct(side = 1, at = pretty(avg_steps$interval), format = "%H:%M")
+
+# interval with max total steps 
+this_interval <- format(avg_steps$interval[which.max(avg_steps$steps)], "%H:%M")
+```
+
+The interval with the **maximum number of total steps** across the average of all days is **`r this_interval`**.
 
 ## Imputing missing values
 
+Total number of rows with missing values in the dataset: `r sum(is.na(step_data))`.
 
+```{r}
+library(tidyverse)
+
+# calculate the average per interval
+mean_interval <- step_data %>% group_by(interval) %>% 
+  summarise(mean_steps = mean(steps, na.rm = T))
+
+# fill in the missing data with the average of that interval
+complete_steps_data <- step_data %>% left_join(mean_interval, by = "interval") %>% 
+  mutate(
+    steps = if_else(is.na(steps), mean_steps, steps)
+  ) %>% 
+  dplyr::select(-mean_steps)
+
+# re-compute the total steps per day, mean, and median total steps per day
+total_steps_c <- aggregate(steps~date, complete_steps_data, FUN = sum, na.rm = T)
+mean_steps_c <- floor(mean(total_steps_c$steps, na.rm = T))
+med_steps_c <- floor(median(total_steps_c$steps, na.rm = T))
+
+# histogram of total steps per day with missing data
+hist(total_steps_c$steps, main = "Histogram of Total Steps per Day",
+     xlab = "Total Steps",
+     col = "lightblue")
+```
+
+**Mean total steps per day: `r mean_steps_c`. **  
+**Median total steps per day: `r med_steps_c`.  **
 
 ## Are there differences in activity patterns between weekdays and weekends?
+
+```{r}
+# add a factor column indicating if the day is a weekday or weekend
+activity_days <- complete_steps_data %>% 
+  mutate(DayOfWeek = weekdays(date),
+         dayType = factor(ifelse(DayOfWeek %in% c("Saturday", "Sunday"), 
+                                 "weekend", "weekday"), 
+                          levels = c("weekday", "weekend")))
+
+# get the mean steps per interval and type of day
+summ_dat <- activity_days %>% group_by(interval, dayType) %>% 
+  summarise(mean_steps = mean(steps),
+            .groups = "drop")
+
+# scale the data
+summ_dat <- summ_dat %>% group_by(dayType) %>% 
+  mutate(
+    mean_steps_scaled = as.numeric(scale(mean_steps))
+  ) %>% 
+  ungroup()
+
+# plot comparing intervals on weekdays versus weekends
+
+lattice::xyplot(
+  mean_steps_scaled~interval | dayType,
+  data = summ_dat,
+  type = "l",
+  layout = c(1,2),
+  xlab = "Interval",
+  ylab = "Number of Steps",
+  scales = list(
+    x = list(
+      format = "%H:%M",
+      at = pretty(summ_dat$interval)
+    )
+  )
+)
+```
+
+There are differences between weekend and weekday activity. On weekends there are more steps taken on average throughout the day, whereas on weekdays there is a high number of steps taken in the morning, then less steps throughout the remainder of the day.
